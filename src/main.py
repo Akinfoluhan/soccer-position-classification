@@ -203,3 +203,94 @@ print(
          "rank_test_score"]
     ]
 )
+
+from sklearn.neighbors import KNeighborsClassifier
+
+# Build the KNN pipeline
+knn = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("scaler", StandardScaler()),
+    ("classifier", KNeighborsClassifier())
+])
+
+# Hyperparameter values to test
+knn_param_grid = {
+    "classifier__n_neighbors": [3, 5, 7, 11, 15, 21, 31, 51, 71, 101, 151, 201]
+}
+
+# Tune KNN using group-aware cross-validation
+knn_search = GridSearchCV(
+    estimator=knn,
+    param_grid=knn_param_grid,
+    cv=cv,
+    scoring="accuracy",
+    n_jobs=-1
+)
+
+knn_search.fit(
+    X_train,
+    y_train,
+    groups=groups_train
+)
+
+print("Best K:", knn_search.best_params_)
+print("Best KNN CV accuracy:", knn_search.best_score_)
+
+# Convert the KNN cross-validation results to a DataFrame
+knn_results = pd.DataFrame(knn_search.cv_results_)
+
+# Display performance for each value of K
+print(
+    knn_results[
+        [
+            "param_classifier__n_neighbors",
+            "mean_test_score",
+            "std_test_score",
+            "rank_test_score"
+        ]
+    ]
+)
+
+from sklearn.tree import DecisionTreeClassifier
+
+# Create the Decision Tree pipeline
+tree = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("classifier", DecisionTreeClassifier(random_state=42))
+])
+
+# Hyperparameters to tune
+tree_param_grid = {
+    "classifier__max_depth": [2, 3, 5, 7, 10, 15, None]
+}
+
+# Perform group-aware cross-validation
+tree_search = GridSearchCV(
+    estimator=tree,
+    param_grid=tree_param_grid,
+    cv=cv,
+    scoring="accuracy",
+    n_jobs=-1
+)
+
+tree_search.fit(
+    X_train,
+    y_train,
+    groups=groups_train
+)
+
+print("Best tree depth:", tree_search.best_params_)
+print("Best Decision Tree CV accuracy:", tree_search.best_score_)
+
+tree_results = pd.DataFrame(tree_search.cv_results_)
+
+print(
+    tree_results[
+        [
+            "param_classifier__max_depth",
+            "mean_test_score",
+            "std_test_score",
+            "rank_test_score"
+        ]
+    ]
+)
