@@ -1,46 +1,61 @@
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
+from sklearn.dummy import DummyClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import (
+    GridSearchCV,
+    GroupShuffleSplit,
+    StratifiedGroupKFold,
+    cross_val_score,
+)
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
+
+DEBUG = False
 
 # Load the soccer players dataset
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "soccer_players.csv"
-df = pd.read_csv(DATA_DIR)
+df = pd.read_csv(DATA_DIR).copy()
 
-# Display the first few rows of the dataset
-print(df.head())
+# Explore the original dataset
+if DEBUG:
+    print("\n--- Dataset Exploration ---")
+    print(df.head())
+    print("Dataset shape:", df.shape)
+    print(df.dtypes)
 
-# Display the number of rows and columns in the dataset
-print(df.shape)
+    missing_values = df.isnull().sum()
+    print("Missing values:")
+    print(missing_values[missing_values > 0])
 
-# Display the data types of each column
-print(df.dtypes)
-
-# Count missing values in each column
-missing_values = df.isnull().sum()
-print("Missing values in each column:")
-print(missing_values)
-
-# Examine all unique positions in the dataset
-unique_positions = df['Pos'].value_counts()
-print("Unique positions and their counts:")
-print(unique_positions)
+    print("Original position distribution:")
+    print(df["Pos"].value_counts())
 
 
-# Extract the primary position
+# Extract primary position and remove goalkeepers
 df["Primary_Pos"] = df["Pos"].str.split(",").str[0]
-
-# Remove goalkeepers
 df = df[df["Primary_Pos"] != "GK"].copy()
 
-# Check our cleaned positions
+print("\n--- Cleaned Dataset ---")
+print("Total records:", len(df))
+print("Position distribution:")
 print(df["Primary_Pos"].value_counts())
 
-# Check for missing values in the cleaned dataset
-print(df.isnull().sum()[df.isnull().sum() > 0])
+# Inspect missing values and retained columns when debugging
+if DEBUG:
+    print("\nMissing values after removing goalkeepers:")
+    missing = df.isnull().sum()
+    print(missing[missing > 0])
 
-# Remove columns where every value is missing
+# Remove columns containing only missing values
 df = df.dropna(axis=1, how="all")
 
-print("Remaining columns:", df.shape[1])
+if DEBUG:
+    print("Remaining columns:", df.shape[1])
 
 # Select features for our model
 features = [
@@ -67,28 +82,25 @@ features = [
 
 # Check whether all selected features exist
 missing_features = [col for col in features if col not in df.columns]
+if missing_features:
+    raise ValueError(f"Missing features: {missing_features}")
 
-print("Missing feature columns:", missing_features)
-
-print(df.columns.tolist())
-
-# Count how many times each player appears
+# Identify repeated player names
 player_counts = df["Player"].value_counts()
-
-# Find players who appear more than once
 repeated_players = player_counts[player_counts > 1]
 
-print("Number of repeated player names:", len(repeated_players))
-print(repeated_players.head(20))
+print("\nRepeated player names:", len(repeated_players))
 
-# Inspect records belonging to one repeated player
-print(
-    df[df["Player"] == "Max Aarons"][
-        ["Player", "Squad", "Comp", "Pos", "MP", "Gls", "Ast"]
-    ]
-)
+if DEBUG:
+    print("\nFirst 20 repeated names:")
+    print(repeated_players.head(20))
 
-from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold
+    print("\nExample of a player appearing for multiple clubs:")
+    print(
+        df[df["Player"] == "Max Aarons"][
+            ["Player", "Squad", "Comp", "Pos", "MP", "Gls", "Ast"]
+        ]
+    )
 
 # Define input features and target variable
 X = df[features]
@@ -119,16 +131,23 @@ groups_train = groups.iloc[train_idx]
 print("Training records:", len(X_train))
 print("Test records:", len(X_test))
 
+# Examine class distributions
+print("Training class distribution:")
+print(y_train.value_counts(normalize=True) * 100)
+
+print("Test class distribution:")
+print(y_test.value_counts(normalize=True) * 100)
+
 # Verify that no player appears in both sets
 train_players = set(groups.iloc[train_idx])
 test_players = set(groups.iloc[test_idx])
 
 overlap = train_players.intersection(test_players)
 
-print("Players in both sets:", len(overlap))
+# Stop execution if any players appear in both sets
+assert len(overlap) == 0, "Player overlap detected!"
 
-from sklearn.dummy import DummyClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+print("Players in both sets:", len(overlap))
 
 # Create a dummy classifier that predicts the most frequent class
 baseline = DummyClassifier(strategy="most_frequent")
@@ -149,23 +168,19 @@ baseline_scores = cross_val_score(
     scoring="accuracy"
 )
 
-print("Baseline fold scores:", baseline_scores)
-print("Baseline mean accuracy:", baseline_scores.mean())
-print("Baseline standard deviation:", baseline_scores.std())
+print("\n--- Baseline Model ---")
+print("Mean CV accuracy:", baseline_scores.mean())
+print("CV standard deviation:", baseline_scores.std())
 
+if DEBUG:
+    print("Individual fold scores:", baseline_scores)
 
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
 
 log_reg = Pipeline([
     ("imputer", SimpleImputer(strategy="median")),
     ("scaler", StandardScaler()),
     ("classifier", LogisticRegression(max_iter=2000))
 ])
-
-from sklearn.model_selection import GridSearchCV
 
 # Values of C we want to test
 param_grid = {
@@ -188,23 +203,23 @@ log_reg_search.fit(
     groups=groups_train
 )
 
+print("\n--- Logistic Regression ---")
 print("Best C:", log_reg_search.best_params_)
 print("Best CV accuracy:", log_reg_search.best_score_)
 
-# Convert cross-validation results to a DataFrame
-cv_results = pd.DataFrame(log_reg_search.cv_results_)
+if DEBUG:
+    cv_results = pd.DataFrame(log_reg_search.cv_results_)
+    print(
+        cv_results[
+            [
+                "param_classifier__C",
+                "mean_test_score",
+                "std_test_score",
+                "rank_test_score"
+            ]
+        ]
+    )
 
-# Display the regularization values and their scores
-print(
-    cv_results[
-        ["param_classifier__C",
-         "mean_test_score",
-         "std_test_score",
-         "rank_test_score"]
-    ]
-)
-
-from sklearn.neighbors import KNeighborsClassifier
 
 # Build the KNN pipeline
 knn = Pipeline([
@@ -233,25 +248,22 @@ knn_search.fit(
     groups=groups_train
 )
 
+print("\n--- KNN ---")
 print("Best K:", knn_search.best_params_)
-print("Best KNN CV accuracy:", knn_search.best_score_)
+print("Best CV accuracy:", knn_search.best_score_)
 
-# Convert the KNN cross-validation results to a DataFrame
-knn_results = pd.DataFrame(knn_search.cv_results_)
-
-# Display performance for each value of K
-print(
-    knn_results[
-        [
-            "param_classifier__n_neighbors",
-            "mean_test_score",
-            "std_test_score",
-            "rank_test_score"
+if DEBUG:
+    knn_results = pd.DataFrame(knn_search.cv_results_)
+    print(
+        knn_results[
+            [
+                "param_classifier__n_neighbors",
+                "mean_test_score",
+                "std_test_score",
+                "rank_test_score"
+            ]
         ]
-    ]
-)
-
-from sklearn.tree import DecisionTreeClassifier
+    )
 
 # Create the Decision Tree pipeline
 tree = Pipeline([
@@ -279,18 +291,50 @@ tree_search.fit(
     groups=groups_train
 )
 
-print("Best tree depth:", tree_search.best_params_)
-print("Best Decision Tree CV accuracy:", tree_search.best_score_)
+print("\n--- Decision Tree ---")
+print("Best depth:", tree_search.best_params_)
+print("Best CV accuracy:", tree_search.best_score_)
 
-tree_results = pd.DataFrame(tree_search.cv_results_)
-
-print(
-    tree_results[
-        [
-            "param_classifier__max_depth",
-            "mean_test_score",
-            "std_test_score",
-            "rank_test_score"
+if DEBUG:
+    tree_results = pd.DataFrame(tree_search.cv_results_)
+    print(
+        tree_results[
+            [
+                "param_classifier__max_depth",
+                "mean_test_score",
+                "std_test_score",
+                "rank_test_score"
+            ]
         ]
+    )
+
+# Summarize cross-validation results
+model_results = pd.DataFrame({
+    "Model": [
+        "Baseline",
+        "Logistic Regression",
+        "KNN",
+        "Decision Tree"
+    ],
+    "CV Accuracy": [
+        baseline_scores.mean(),
+        log_reg_search.best_score_,
+        knn_search.best_score_,
+        tree_search.best_score_
+    ],
+    "Best Parameter": [
+        "Most frequent",
+        str(log_reg_search.best_params_),
+        str(knn_search.best_params_),
+        str(tree_search.best_params_)
     ]
+})
+
+# Sort by highest validation accuracy
+model_results = model_results.sort_values(
+    by="CV Accuracy",
+    ascending=False
 )
+
+print("\nFinal Model Comparison:")
+print(model_results.to_string(index=False))
