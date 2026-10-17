@@ -1,7 +1,9 @@
 import pandas as pd
+from pathlib import Path
 
 # Load the soccer players dataset
-df = pd.read_csv('soccer_players.csv')
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "soccer_players.csv"
+df = pd.read_csv(DATA_DIR)
 
 # Display the first few rows of the dataset
 print(df.head())
