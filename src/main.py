@@ -71,3 +71,59 @@ missing_features = [col for col in features if col not in df.columns]
 print("Missing feature columns:", missing_features)
 
 print(df.columns.tolist())
+
+# Count how many times each player appears
+player_counts = df["Player"].value_counts()
+
+# Find players who appear more than once
+repeated_players = player_counts[player_counts > 1]
+
+print("Number of repeated player names:", len(repeated_players))
+print(repeated_players.head(20))
+
+# Inspect records belonging to one repeated player
+print(
+    df[df["Player"] == "Max Aarons"][
+        ["Player", "Squad", "Comp", "Pos", "MP", "Gls", "Ast"]
+    ]
+)
+
+
+from sklearn.model_selection import GroupShuffleSplit
+
+# Define input features and target variable
+X = df[features]
+y = df["Primary_Pos"]
+
+# Identify groups using player names
+groups = df["Player"]
+
+# Create an 80/20 group-aware split
+splitter = GroupShuffleSplit(
+    n_splits=1,
+    test_size=0.2,
+    random_state=42
+)
+
+train_idx, test_idx = next(
+    splitter.split(X, y, groups=groups)
+)
+
+X_train = X.iloc[train_idx]
+X_test = X.iloc[test_idx]
+
+y_train = y.iloc[train_idx]
+y_test = y.iloc[test_idx]
+
+groups_train = groups.iloc[train_idx]
+
+print("Training records:", len(X_train))
+print("Test records:", len(X_test))
+
+# Verify that no player appears in both sets
+train_players = set(groups.iloc[train_idx])
+test_players = set(groups.iloc[test_idx])
+
+overlap = train_players.intersection(test_players)
+
+print("Players in both sets:", len(overlap))
