@@ -153,3 +153,53 @@ print("Baseline fold scores:", baseline_scores)
 print("Baseline mean accuracy:", baseline_scores.mean())
 print("Baseline standard deviation:", baseline_scores.std())
 
+
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+
+log_reg = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("scaler", StandardScaler()),
+    ("classifier", LogisticRegression(max_iter=2000))
+])
+
+from sklearn.model_selection import GridSearchCV
+
+# Values of C we want to test
+param_grid = {
+    "classifier__C": [0.01, 0.1, 1, 10, 100]
+}
+
+# Search for the best regularization value
+log_reg_search = GridSearchCV(
+    estimator=log_reg,
+    param_grid=param_grid,
+    cv=cv,
+    scoring="accuracy",
+    n_jobs=-1
+)
+
+# Train and evaluate using group-aware cross-validation
+log_reg_search.fit(
+    X_train,
+    y_train,
+    groups=groups_train
+)
+
+print("Best C:", log_reg_search.best_params_)
+print("Best CV accuracy:", log_reg_search.best_score_)
+
+# Convert cross-validation results to a DataFrame
+cv_results = pd.DataFrame(log_reg_search.cv_results_)
+
+# Display the regularization values and their scores
+print(
+    cv_results[
+        ["param_classifier__C",
+         "mean_test_score",
+         "std_test_score",
+         "rank_test_score"]
+    ]
+)
