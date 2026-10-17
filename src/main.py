@@ -88,8 +88,7 @@ print(
     ]
 )
 
-
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold
 
 # Define input features and target variable
 X = df[features]
@@ -127,3 +126,30 @@ test_players = set(groups.iloc[test_idx])
 overlap = train_players.intersection(test_players)
 
 print("Players in both sets:", len(overlap))
+
+from sklearn.dummy import DummyClassifier
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+
+# Create a dummy classifier that predicts the most frequent class
+baseline = DummyClassifier(strategy="most_frequent")
+
+# Use stratified k-fold cross-validation to evaluate the baseline model
+cv = StratifiedGroupKFold(
+    n_splits=5,
+    shuffle=True,
+    random_state=42
+)
+
+baseline_scores = cross_val_score(
+    baseline,
+    X_train,
+    y_train,
+    groups=groups_train,
+    cv=cv,
+    scoring="accuracy"
+)
+
+print("Baseline fold scores:", baseline_scores)
+print("Baseline mean accuracy:", baseline_scores.mean())
+print("Baseline standard deviation:", baseline_scores.std())
+
