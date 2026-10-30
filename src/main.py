@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.dummy import DummyClassifier
@@ -10,6 +11,7 @@ from sklearn.model_selection import (
     GroupShuffleSplit,
     StratifiedGroupKFold,
     cross_val_score,
+    learning_curve,
 )
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
@@ -389,6 +391,95 @@ model_results = model_results.sort_values(
 
 print("\nFinal Model Comparison:")
 print(model_results.to_string(index=False))
+
+
+# Generate a group-aware learning curve
+fractions = [0.2, 0.4, 0.6, 0.8, 1.0]
+
+learning_sizes = []
+learning_train_scores = []
+learning_val_scores = []
+
+for fraction in fractions:
+    fold_sizes = []
+    fold_train_scores = []
+    fold_val_scores = []
+
+    for train_idx, val_idx in cv.split(
+        X_train, y_train, groups_train
+    ):
+        # Separate training and validation folds
+        X_fold_train = X_train.iloc[train_idx]
+        y_fold_train = y_train.iloc[train_idx]
+        X_fold_val = X_train.iloc[val_idx]
+        y_fold_val = y_train.iloc[val_idx]
+
+        fold_groups = groups_train.iloc[train_idx]
+
+        # Select whole player groups
+        unique_players = fold_groups.unique()
+
+        rng = np.random.default_rng(42)
+        shuffled_players = rng.permutation(unique_players)
+
+        n_players = max(1, int(len(shuffled_players) * fraction))
+        selected_players = shuffled_players[:n_players]
+
+        mask = fold_groups.isin(selected_players)
+
+        X_subset = X_fold_train.loc[mask]
+        y_subset = y_fold_train.loc[mask]
+
+        # Train a fresh copy of the selected model
+        from sklearn.base import clone
+
+        model = clone(log_reg_search.best_estimator_)
+        model.fit(X_subset, y_subset)
+
+        fold_sizes.append(len(X_subset))
+        fold_train_scores.append(model.score(X_subset, y_subset))
+        fold_val_scores.append(model.score(X_fold_val, y_fold_val))
+
+    learning_sizes.append(np.mean(fold_sizes))
+    learning_train_scores.append(np.mean(fold_train_scores))
+    learning_val_scores.append(np.mean(fold_val_scores))
+
+print("\n--- Group-Aware Learning Curve ---")
+print("Training sizes:", np.round(learning_sizes, 1))
+print("Training accuracy:", np.round(learning_train_scores, 4))
+print("Validation accuracy:", np.round(learning_val_scores, 4))
+
+# Plot the learning curve
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    learning_sizes,
+    learning_train_scores,
+    marker="o",
+    label="Training Accuracy"
+)
+
+plt.plot(
+    learning_sizes,
+    learning_val_scores,
+    marker="o",
+    label="Validation Accuracy"
+)
+
+plt.xlabel("Number of Training Records")
+plt.ylabel("Accuracy")
+plt.title("Logistic Regression Learning Curve")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.savefig(
+    RESULTS_DIR / "logistic_regression_learning_curve.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
 
 plot_tuning_curve(
     log_reg_search,
