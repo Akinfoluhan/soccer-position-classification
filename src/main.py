@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.dummy import DummyClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
@@ -15,11 +16,58 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
-DEBUG = False
+DEBUG = True
+
+def plot_tuning_curve(search, param_name, title, filename):
+    results = pd.DataFrame(search.cv_results_)
+
+    params = results[f"param_{param_name}"].tolist()
+
+    # Handle None as a category for unrestricted tree depth
+    labels = [str(p) for p in params]
+    positions = range(len(params))
+
+    plt.figure(figsize=(8, 5))
+
+    plt.plot(
+        positions,
+        results["mean_train_score"],
+        marker="o",
+        label="Training Accuracy"
+    )
+
+    plt.plot(
+        positions,
+        results["mean_test_score"],
+        marker="o",
+        label="Validation Accuracy"
+    )
+
+    best_param = search.best_params_[param_name]
+    best_idx = params.index(best_param)
+
+    plt.axvline(
+        x=best_idx,
+        linestyle="--",
+        label=f"Selected: {best_param}"
+    )
+
+    plt.xticks(positions, labels, rotation=45)
+    plt.xlabel(param_name.split("__")[-1])
+    plt.ylabel("Accuracy")
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(RESULTS_DIR / filename, dpi=300, bbox_inches="tight")
+    plt.close()
 
 # Load the soccer players dataset
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "soccer_players.csv"
 df = pd.read_csv(DATA_DIR).copy()
+
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Explore the original dataset
 if DEBUG:
@@ -184,7 +232,7 @@ log_reg = Pipeline([
 
 # Values of C we want to test
 param_grid = {
-    "classifier__C": [0.01, 0.1, 1, 10, 100]
+    "classifier__C": [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000, 1000000]
 }
 
 # Search for the best regularization value
@@ -193,7 +241,8 @@ log_reg_search = GridSearchCV(
     param_grid=param_grid,
     cv=cv,
     scoring="accuracy",
-    n_jobs=-1
+    n_jobs=-1,
+    return_train_score=True
 )
 
 # Train and evaluate using group-aware cross-validation
@@ -239,7 +288,8 @@ knn_search = GridSearchCV(
     param_grid=knn_param_grid,
     cv=cv,
     scoring="accuracy",
-    n_jobs=-1
+    n_jobs=-1,
+    return_train_score=True
 )
 
 knn_search.fit(
@@ -282,7 +332,8 @@ tree_search = GridSearchCV(
     param_grid=tree_param_grid,
     cv=cv,
     scoring="accuracy",
-    n_jobs=-1
+    n_jobs=-1,
+    return_train_score=True
 )
 
 tree_search.fit(
@@ -338,3 +389,24 @@ model_results = model_results.sort_values(
 
 print("\nFinal Model Comparison:")
 print(model_results.to_string(index=False))
+
+plot_tuning_curve(
+    log_reg_search,
+    "classifier__C",
+    "Logistic Regression Hyperparameter Tuning",
+    "logistic_regression_tuning.png"
+)
+
+plot_tuning_curve(
+    knn_search,
+    "classifier__n_neighbors",
+    "KNN Hyperparameter Tuning",
+    "knn_tuning.png"
+)
+
+plot_tuning_curve(
+    tree_search,
+    "classifier__max_depth",
+    "Decision Tree Hyperparameter Tuning",
+    "decision_tree_tuning.png"
+)
