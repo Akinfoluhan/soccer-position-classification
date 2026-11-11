@@ -18,7 +18,16 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    roc_auc_score,
+    roc_curve,
+    auc,
+    RocCurveDisplay
+)
 
 DEBUG = True
 
@@ -824,3 +833,189 @@ print("TP: Incorrect predictions flagged:", true_positives)
 print("FP: Correct predictions flagged:", false_positives)
 print("FN: Incorrect predictions missed:", false_negatives)
 print("TN: Correct predictions accepted:", true_negatives)
+
+# Final evaluation on the held-out test set
+final_model = log_reg_search.best_estimator_
+
+# Standard class predictions
+test_predictions = final_model.predict(X_test)
+
+# Predicted probabilities
+test_probs = final_model.predict_proba(X_test)
+
+# Align probability columns with the cost matrix
+test_column_order = [
+    list(final_model.classes_).index(label)
+    for label in classes
+]
+
+test_probs = test_probs[:, test_column_order]
+
+print("\n--- Final Test Evaluation ---")
+print("Test accuracy:", accuracy_score(y_test, test_predictions))
+
+print("\nClassification Report:")
+print(
+    classification_report(
+        y_test,
+        test_predictions,
+        labels=classes,
+        zero_division=0
+    )
+)
+
+print("\nTest Confusion Matrix:")
+test_cm = confusion_matrix(
+    y_test,
+    test_predictions,
+    labels=classes
+)
+
+print(
+    pd.DataFrame(
+        test_cm,
+        index=classes,
+        columns=classes
+    )
+)
+
+# Visualize the test confusion matrix
+disp = ConfusionMatrixDisplay(
+    confusion_matrix=test_cm,
+    display_labels=classes
+)
+
+disp.plot(cmap="Blues", values_format="d")
+
+plt.title("Logistic Regression: Test Confusion Matrix")
+plt.tight_layout()
+
+plt.savefig(
+    RESULTS_DIR / "test_confusion_matrix.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
+# Calculate multiclass ROC-AUC using sorted class labels
+auc_classes = sorted(classes)
+
+auc_column_order = [
+    classes.index(label)
+    for label in auc_classes
+]
+
+auc_probs = test_probs[:, auc_column_order]
+
+test_auc = roc_auc_score(
+    y_test,
+    auc_probs,
+    labels=auc_classes,
+    multi_class="ovr",
+    average="macro"
+)
+
+print(f"\nTest ROC-AUC (macro OvR): {test_auc:.4f}")
+
+# Apply cost-sensitive classification to test probabilities
+test_cost_predictions = predict_min_cost(
+    test_probs,
+    cost_matrix,
+    classes
+)
+
+standard_test_cost = calculate_cost(
+    y_test,
+    test_predictions,
+    cost_matrix,
+    classes
+)
+
+sensitive_test_cost = calculate_cost(
+    y_test,
+    test_cost_predictions,
+    cost_matrix,
+    classes
+)
+
+print("\n--- Final Test Cost Comparison ---")
+print("Standard cost:", standard_test_cost)
+print("Cost-sensitive cost:", sensitive_test_cost)
+
+print(
+    "Cost-sensitive accuracy:",
+    accuracy_score(y_test, test_cost_predictions)
+)
+
+# Apply the previously selected review threshold
+test_confidence = np.max(test_probs, axis=1)
+test_flagged = test_confidence < best_threshold
+
+test_errors = (
+    test_predictions != y_test.to_numpy()
+)
+
+test_tp = np.sum(test_flagged & test_errors)
+test_fp = np.sum(test_flagged & ~test_errors)
+test_fn = np.sum(~test_flagged & test_errors)
+test_tn = np.sum(~test_flagged & ~test_errors)
+
+test_review_cost = (
+    np.sum(test_flagged) * review_cost
+    + test_fn * missed_error_cost
+)
+
+print("\n--- Final Test Review Policy ---")
+print("Threshold:", best_threshold)
+print("TP: Incorrect predictions flagged:", test_tp)
+print("FP: Correct predictions flagged:", test_fp)
+print("FN: Incorrect predictions missed:", test_fn)
+print("TN: Correct predictions accepted:", test_tn)
+print("Total simulated review cost:", test_review_cost)
+print("Never-review cost:", np.sum(test_errors) * missed_error_cost)
+print("Always-review cost:", len(y_test) * review_cost)
+
+# Plot one-vs-rest ROC curves for each position
+plt.figure(figsize=(8, 5))
+
+for i, position in enumerate(classes):
+    # Convert the multiclass labels into a binary target
+    binary_labels = (y_test.to_numpy() == position).astype(int)
+
+    # Probability of belonging to this position
+    position_probs = test_probs[:, i]
+
+    # Calculate ROC curve and area under the curve
+    fpr, tpr, _ = roc_curve(binary_labels, position_probs)
+    position_auc = auc(fpr, tpr)
+
+    plt.plot(
+        fpr,
+        tpr,
+        label=f"{position} (AUC = {position_auc:.3f})"
+    )
+
+# Reference line: random classification
+plt.plot(
+    [0, 1],
+    [0, 1],
+    linestyle="--",
+    color="gray",
+    label="Random Classifier"
+)
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("Logistic Regression: Test ROC Curves (One-vs-Rest)")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.savefig(
+    RESULTS_DIR / "test_roc_curves.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
