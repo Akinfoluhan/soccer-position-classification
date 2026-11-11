@@ -12,11 +12,13 @@ from sklearn.model_selection import (
     StratifiedGroupKFold,
     cross_val_score,
     learning_curve,
+    cross_val_predict
 )
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix
 
 DEBUG = True
 
@@ -501,3 +503,324 @@ plot_tuning_curve(
     "Decision Tree Hyperparameter Tuning",
     "decision_tree_tuning.png"
 )
+
+# Position labels in a fixed order
+classes = ["DF", "MF", "FW"]
+
+# Rows = actual positions, columns = predicted positions
+cost_matrix = np.array([
+    [0, 2, 5],
+    [2, 0, 2],
+    [5, 2, 0]
+])
+
+print("\n--- Classification Cost Matrix ---")
+print(pd.DataFrame(cost_matrix, index=classes, columns=classes))
+
+def calculate_cost(y_true, y_pred, cost_matrix, classes):
+    label_to_idx = {
+        label: i for i, label in enumerate(classes)
+    }
+
+    total_cost = 0
+
+    for actual, predicted in zip(y_true, y_pred):
+        actual_idx = label_to_idx[actual]
+        predicted_idx = label_to_idx[predicted]
+
+        total_cost += cost_matrix[actual_idx, predicted_idx]
+
+    return total_cost
+
+def predict_min_cost(probabilities, cost_matrix, classes):
+    # Calculate the expected cost of predicting each class
+    expected_costs = probabilities @ cost_matrix
+
+    # Select the prediction with the lowest expected cost
+    predicted_indices = np.argmin(expected_costs, axis=1)
+
+    return np.array(classes)[predicted_indices]
+
+example_probs = np.array([
+    [0.40, 0.35, 0.25]
+])
+
+normal_prediction = np.array(classes)[
+    np.argmax(example_probs, axis=1)
+]
+
+cost_prediction = predict_min_cost(
+    example_probs,
+    cost_matrix,
+    classes
+)
+
+print("Normal prediction:", normal_prediction)
+print("Minimum-cost prediction:", cost_prediction)
+
+
+# Generate group-aware out-of-fold probabilities
+oof_probs = cross_val_predict(
+    estimator=log_reg_search.best_estimator_,
+    X=X_train,
+    y=y_train,
+    groups=groups_train,
+    cv=cv,
+    method="predict_proba",
+    n_jobs=-1
+)
+
+# Align probability columns with our cost matrix
+model_classes = log_reg_search.best_estimator_.classes_
+
+column_order = [
+    list(model_classes).index(label)
+    for label in classes
+]
+
+oof_probs = oof_probs[:, column_order]
+
+# Standard predictions: choose highest probability
+standard_predictions = np.array(classes)[
+    np.argmax(oof_probs, axis=1)
+]
+
+# Cost-sensitive predictions: choose lowest expected cost
+cost_predictions = predict_min_cost(
+    oof_probs,
+    cost_matrix,
+    classes
+)
+
+# Calculate realized classification costs
+standard_cost = calculate_cost(
+    y_train,
+    standard_predictions,
+    cost_matrix,
+    classes
+)
+
+sensitive_cost = calculate_cost(
+    y_train,
+    cost_predictions,
+    cost_matrix,
+    classes
+)
+
+print("\n--- Out-of-Fold Cost Comparison ---")
+print("Standard total cost:", standard_cost)
+print("Cost-sensitive total cost:", sensitive_cost)
+print("Standard average cost:", standard_cost / len(y_train))
+print("Cost-sensitive average cost:", sensitive_cost / len(y_train))
+
+# Compare accuracy
+standard_accuracy = accuracy_score(
+    y_train, standard_predictions
+)
+
+sensitive_accuracy = accuracy_score(
+    y_train, cost_predictions
+)
+
+# Count predictions changed by cost-sensitive classification
+changed_predictions = np.sum(
+    standard_predictions != cost_predictions
+)
+
+print("\n--- Cost-Sensitive Decision Analysis ---")
+print(f"Standard accuracy: {standard_accuracy:.4f}")
+print(f"Cost-sensitive accuracy: {sensitive_accuracy:.4f}")
+print("Predictions changed:", changed_predictions)
+
+# Compare confusion matrices
+print("\nStandard confusion matrix:")
+print(
+    pd.DataFrame(
+        confusion_matrix(y_train, standard_predictions, labels=classes),
+        index=classes,
+        columns=classes
+    )
+)
+
+print("\nCost-sensitive confusion matrix:")
+print(
+    pd.DataFrame(
+        confusion_matrix(y_train, cost_predictions, labels=classes),
+        index=classes,
+        columns=classes
+    )
+)
+
+
+# Compare standard and cost-sensitive decisions under each cost scenario
+penalties = [2, 5, 10, 20]
+
+sensitivity_results = []
+
+for penalty in penalties:
+    adjusted_cost_matrix = np.array([
+        [0, 2, penalty],
+        [2, 0, 2],
+        [penalty, 2, 0]
+    ])
+
+    adjusted_predictions = predict_min_cost(
+        oof_probs,
+        adjusted_cost_matrix,
+        classes
+    )
+
+    # Evaluate both rules under the same cost matrix
+    standard_total = calculate_cost(
+        y_train,
+        standard_predictions,
+        adjusted_cost_matrix,
+        classes
+    )
+
+    sensitive_total = calculate_cost(
+        y_train,
+        adjusted_predictions,
+        adjusted_cost_matrix,
+        classes
+    )
+
+    # Count expensive mistakes and midfielder predictions
+    adjusted_cm = confusion_matrix(
+        y_train,
+        adjusted_predictions,
+        labels=classes
+    )
+
+    df_fw_errors = adjusted_cm[0, 2] + adjusted_cm[2, 0]
+    mf_predictions = np.sum(adjusted_predictions == "MF")
+
+    sensitivity_results.append({
+        "DF-FW Penalty": penalty,
+        "Accuracy": accuracy_score(y_train, adjusted_predictions),
+        "Standard Cost": standard_total,
+        "Sensitive Cost": sensitive_total,
+        "Cost Savings": standard_total - sensitive_total,
+        "DF-FW Errors": df_fw_errors,
+        "MF Predictions": mf_predictions
+    })
+
+sensitivity_df = pd.DataFrame(sensitivity_results)
+
+print("\n--- Cost Sensitivity Comparison ---")
+print(sensitivity_df.to_string(index=False))
+
+# Threshold analysis: flag uncertain predictions for human review
+
+# Use the standard Logistic Regression predictions
+confidence = np.max(oof_probs, axis=1)
+
+# Identify whether each prediction was incorrect
+actual_errors = (
+    standard_predictions != y_train.to_numpy()
+)
+
+# Hypothetical deployment costs
+review_cost = 1
+missed_error_cost = 5
+
+thresholds = np.linspace(0, 1, 101)
+threshold_results = []
+
+for threshold in thresholds:
+    # Flag predictions with confidence below threshold
+    flagged = confidence < threshold
+
+    # Every flagged prediction requires human review
+    review_expense = np.sum(flagged) * review_cost
+
+    # Incorrect predictions that weren't flagged incur a penalty
+    missed_errors = np.sum(~flagged & actual_errors)
+    missed_expense = missed_errors * missed_error_cost
+
+    total_cost = review_expense + missed_expense
+
+    threshold_results.append({
+        "Threshold": threshold,
+        "Flagged": np.sum(flagged),
+        "Missed Errors": missed_errors,
+        "Total Cost": total_cost
+    })
+
+threshold_df = pd.DataFrame(threshold_results)
+
+# Select the threshold with the lowest development cost
+best_row = threshold_df.loc[
+    threshold_df["Total Cost"].idxmin()
+]
+
+best_threshold = float(best_row["Threshold"])
+
+print("\n--- Threshold Optimization ---")
+print("Best threshold:", best_threshold)
+print("Predictions flagged:", int(best_row["Flagged"]))
+print("Errors not flagged:", int(best_row["Missed Errors"]))
+print("Minimum total cost:", int(best_row["Total Cost"]))
+
+# Compare with a conventional 50% threshold
+print("\nThreshold comparison:")
+print(
+    threshold_df[
+        threshold_df["Threshold"].round(2).isin(
+            [0.0, 0.5, best_threshold, 1.0]
+        )
+    ].to_string(index=False)
+)
+
+# Plot review cost against confidence threshold
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    threshold_df["Threshold"],
+    threshold_df["Total Cost"],
+    label="Total Simulated Cost"
+)
+
+plt.axvline(
+    best_threshold,
+    color="green",
+    linestyle="--",
+    label=f"Selected Threshold = {best_threshold:.2f}"
+)
+
+plt.axvline(
+    0.5,
+    color="orange",
+    linestyle=":",
+    label="Reference Threshold = 0.50"
+)
+
+plt.xlabel("Confidence Threshold")
+plt.ylabel("Total Simulated Cost")
+plt.title("Cost vs. Human Review Threshold")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.savefig(
+    RESULTS_DIR / "review_threshold_cost.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
+# Evaluate the selected review policy
+flagged = confidence < best_threshold
+
+# Treat an incorrect classification as a review-worthy error
+true_positives = np.sum(flagged & actual_errors)
+false_positives = np.sum(flagged & ~actual_errors)
+false_negatives = np.sum(~flagged & actual_errors)
+true_negatives = np.sum(~flagged & ~actual_errors)
+
+print("\n--- Review Policy Outcomes ---")
+print("TP: Incorrect predictions flagged:", true_positives)
+print("FP: Correct predictions flagged:", false_positives)
+print("FN: Incorrect predictions missed:", false_negatives)
+print("TN: Correct predictions accepted:", true_negatives)
