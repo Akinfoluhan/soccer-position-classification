@@ -11,13 +11,13 @@ from sklearn.model_selection import (
     GroupShuffleSplit,
     StratifiedGroupKFold,
     cross_val_score,
-    learning_curve,
     cross_val_predict
 )
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.base import clone
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -29,50 +29,61 @@ from sklearn.metrics import (
     RocCurveDisplay
 )
 
-DEBUG = True
+DEBUG = False  # Set to True for detailed debugging output
 
 def plot_tuning_curve(search, param_name, title, filename):
     results = pd.DataFrame(search.cv_results_)
-
     params = results[f"param_{param_name}"].tolist()
-
-    # Handle None as a category for unrestricted tree depth
-    labels = [str(p) for p in params]
-    positions = range(len(params))
+    best_param = search.best_params_[param_name]
 
     plt.figure(figsize=(8, 5))
 
+    if param_name == "classifier__max_depth":
+        x_values = np.arange(len(params))
+        tick_labels = [str(p) for p in params]
+        best_x = params.index(best_param)
+
+        plt.xticks(x_values, tick_labels)
+    else:
+        x_values = np.array(params, dtype=float)
+        best_x = float(best_param)
+
+        if param_name == "classifier__C":
+            plt.xscale("log")
+
     plt.plot(
-        positions,
+        x_values,
         results["mean_train_score"],
         marker="o",
         label="Training Accuracy"
     )
 
     plt.plot(
-        positions,
+        x_values,
         results["mean_test_score"],
         marker="o",
         label="Validation Accuracy"
     )
 
-    best_param = search.best_params_[param_name]
-    best_idx = params.index(best_param)
-
     plt.axvline(
-        x=best_idx,
+        best_x,
         linestyle="--",
         label=f"Selected: {best_param}"
     )
 
-    plt.xticks(positions, labels, rotation=45)
     plt.xlabel(param_name.split("__")[-1])
     plt.ylabel("Accuracy")
     plt.title(title)
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(RESULTS_DIR / filename, dpi=300, bbox_inches="tight")
+
+    plt.savefig(
+        RESULTS_DIR / filename,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
     plt.close()
 
 # Load the soccer players dataset
@@ -442,8 +453,6 @@ for fraction in fractions:
         y_subset = y_fold_train.loc[mask]
 
         # Train a fresh copy of the selected model
-        from sklearn.base import clone
-
         model = clone(log_reg_search.best_estimator_)
         model.fit(X_subset, y_subset)
 
@@ -549,24 +558,6 @@ def predict_min_cost(probabilities, cost_matrix, classes):
     predicted_indices = np.argmin(expected_costs, axis=1)
 
     return np.array(classes)[predicted_indices]
-
-example_probs = np.array([
-    [0.40, 0.35, 0.25]
-])
-
-normal_prediction = np.array(classes)[
-    np.argmax(example_probs, axis=1)
-]
-
-cost_prediction = predict_min_cost(
-    example_probs,
-    cost_matrix,
-    classes
-)
-
-print("Normal prediction:", normal_prediction)
-print("Minimum-cost prediction:", cost_prediction)
-
 
 # Generate group-aware out-of-fold probabilities
 oof_probs = cross_val_predict(
