@@ -1,93 +1,63 @@
 # Soccer Position Classification Using Machine Learning
 
-A machine learning project that predicts soccer players' primary field positions—**Defender (DF), Midfielder (MF), or Forward (FW)**—using performance statistics from the 2024–25 season.
+A machine learning project that predicts soccer players' recorded primary field positions—**Defender (DF), Midfielder (MF), or Forward (FW)**—using performance statistics from the 2024–25 season.
 
-The project compares multiple classification algorithms, investigates their generalization performance, and explores cost-sensitive decisions and confidence-based human review.
+The project compares classification algorithms, evaluates generalization, and explores cost-sensitive predictions and confidence-based human review.
 
 ## Project Overview
 
-Can a player's statistical performance accurately predict their primary playing position?
+**Research question:** Can a player's statistical performance predict their primary playing position?
 
-This project investigates that question using supervised machine learning. Beyond classification accuracy, it examines which positions are hardest to distinguish, how model complexity affects performance, and how different error costs influence predictions.
-
-A potential application is supporting scouting and player-development analysis by highlighting players whose statistical profiles warrant further investigation. The model predicts recorded positions, **not necessarily a player's optimal position**.
+A potential use is supporting scouting and player-development analysis by identifying unusual statistical profiles for further investigation. The classifier predicts a player's _recorded position_, not necessarily their optimal position.
 
 ## Dataset and Preprocessing
 
-The dataset contains performance statistics for players in major European soccer leagues during the 2024–25 season.
+**Source:** [Football Players Stats (2024–2025)](https://www.kaggle.com/datasets/hubertsidorowicz/football-players-stats-2024-2025), published on Kaggle by **Hubert Sidorowicz**. The dataset is described as derived from [FBref](https://fbref.com/) and covers the five major European leagues during the 2024–25 season. The project uses the CSV included in `data/`.
 
-- **Original dataset:** 2,854 records
-- **After excluding goalkeepers:** 2,642 records
-- **Target classes:** DF, MF, FW
-- **Selected features:** 19 numerical attributes covering playing time, goals, assists, expected goals, passing, progression, defensive actions, and aerial duels
-- **Training set:** 2,109 records
-- **Held-out test set:** 533 records
+- Original dataset: **2,854 records and 165 columns**
+- After excluding goalkeepers: **2,642 records** (1,022 DF, 900 MF, 720 FW)
+- Target: first listed position for players with multiple listed roles
+- Features: **19 numerical attributes** describing age, playing time, goals, assists, expected goals, shooting, progression, passing, defending, recoveries, and aerial duels
+- Training: **2,109 records**; held-out test: **533 records**
 
-Preprocessing includes median imputation for missing numerical values and feature standardization for Logistic Regression and KNN.
+Median imputation handles missing values within each training fold; Logistic Regression and KNN also use standardization inside their pipelines. Player-name grouping is used for the train/test split and five-fold stratified group-aware cross-validation to reduce leakage across multiple club records for the same player.
 
-To reduce data leakage, the project uses player-group-aware splitting and cross-validation, preventing records sharing a player name from appearing in both training and validation sets.
+## Model Comparison
 
-## Models and Results
+| Model                   | Selected setting    | Mean 5-fold CV accuracy |
+| ----------------------- | ------------------- | ----------------------: |
+| **Logistic Regression** | `C = 10000`         |              **80.75%** |
+| K-Nearest Neighbors     | `k = 51`            |                  72.02% |
+| Decision Tree           | `max_depth = 7`     |                  70.27% |
+| Dummy baseline          | Most frequent class |                  38.83% |
 
-Four classifiers were evaluated using five-fold stratified group-aware cross-validation.
+Logistic Regression achieved the highest mean cross-validation accuracy. Hyperparameter tuning curves and a group-aware learning curve are saved in `results/`.
 
-| Model               | Best Hyperparameter | Mean CV Accuracy |
-| ------------------- | ------------------- | ---------------: |
-| Logistic Regression | C = 10,000          |       **80.75%** |
-| K-Nearest Neighbors | k = 51              |           72.02% |
-| Decision Tree       | max_depth = 7       |           70.27% |
-| Dummy Classifier    | Most frequent class |           38.83% |
+## Final Held-Out Test Results
 
-**Logistic Regression was selected** because it achieved the highest mean cross-validation accuracy.
+| Metric                    |                Value |
+| ------------------------- | -------------------: |
+| Accuracy                  | **76.17%** (406/533) |
+| Macro precision           |                 0.75 |
+| Macro recall              |                 0.76 |
+| Macro F1                  |                 0.76 |
+| Macro one-vs-rest ROC-AUC |           **0.9208** |
 
-### Final Test Performance
+Defenders were the easiest group to identify by recall (**86%**); midfielders were the hardest (**66%** recall).
 
-The selected model was evaluated once on the held-out test set.
+## Cost-Sensitive Classification and Human Review
 
-| Metric                    |     Result |
-| ------------------------- | ---------: |
-| Test accuracy             | **76.17%** |
-| Macro precision           |       0.75 |
-| Macro recall              |       0.76 |
-| Macro F1-score            |       0.76 |
-| Macro one-vs-rest ROC-AUC | **0.9208** |
+The project distinguishes **multiclass position classification** from a separate **binary human-review decision**.
 
-Defenders were classified most reliably, while midfielders had the lowest recall (66%), suggesting greater statistical overlap with other playing roles.
+A hypothetical position-error cost matrix assigns 2 units to errors involving midfielders and 5 units to DF–FW confusion. On the test set, minimum-expected-cost classification reduced the total penalty from **311 to 272 units (12.54%)**, with unchanged accuracy of **76.17%**.
 
-## Model Diagnostics
+For the review policy, predictions with maximum probability below a confidence threshold are flagged for verification. A **0.71** threshold was selected using out-of-fold training predictions under hypothetical costs of 1 unit per review and 5 units per missed error. On the held-out test set, this policy flagged **207/533** predictions, captured **94/127** classification errors, and incurred a simulated cost of **372** units versus **635** when never reviewing and **533** when always reviewing.
 
-Hyperparameter tuning and learning curves were used to examine bias, variance, and generalization.
+Training-set sensitivity analysis also tested missed-error-to-review-cost ratios of **5:1, 10:1, and 20:1**, selecting confidence thresholds of **0.71, 0.91, and 0.98**, respectively.
 
-The Decision Tree showed clear overfitting at larger depths, while Logistic Regression exhibited a relatively small training-validation gap. A group-aware learning curve showed validation accuracy approaching approximately 81% as additional training records were included.
+**These are illustrative costs, not measured financial values.** The simulation assumes that human review resolves flagged classification errors; it does not establish which players ought to change position.
 
-Figures are generated automatically in the `results/` directory.
-
-## Cost-Sensitive Classification
-
-A hypothetical classification cost matrix was introduced to penalize defender–forward confusion more heavily than errors involving midfielders.
-
-Under the selected cost assumptions:
-
-| Decision Rule                    | Test Accuracy | Test Classification Cost |
-| -------------------------------- | ------------: | -----------------------: |
-| Standard prediction              |        76.17% |                      311 |
-| Minimum expected-cost prediction |        76.17% |                      272 |
-
-The cost-sensitive decision rule reduced the hypothetical test classification penalty by **12.54%** without changing test accuracy.
-
-A separate confidence-based review policy flags uncertain predictions for human verification.
-
-- **Selected confidence threshold:** 0.71
-- **Test records flagged:** 207 of 533
-- **Incorrect predictions caught:** 94 of 127
-- **Simulated test review cost:** 372 units
-- **Never-review baseline:** 635 units
-
-Thresholds were selected using out-of-fold training predictions, not the test set. Sensitivity analysis also examined missed-error-to-review-cost ratios of 5:1, 10:1, and 20:1.
-
-All costs are hypothetical and intended to illustrate decision-making trade-offs rather than established financial or scouting outcomes.
-
-## Project Structure
+## Repository Structure
 
 ```text
 soccer-position-classification/
@@ -102,50 +72,37 @@ soccer-position-classification/
 └── .gitignore
 ```
 
-## Installation and Usage
+## Setup and Usage
 
-**Requirements:** Python 3.14 and the dependencies listed in `requirements.txt`.
-
-Clone the repository:
+Use **Python 3.14** with the pinned dependencies in `requirements.txt`.
 
 ```bash
 git clone https://github.com/Akinfoluhan/soccer-position-classification.git
 cd soccer-position-classification
-```
-
-Create and activate a virtual environment:
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
 pip install -r requirements.txt
-```
-
-Run the project:
-
-```bash
 python3 src/main.py
 ```
 
-The script prints model comparisons, cross-validation results, classification metrics, and cost analyses. It also saves diagnostic and evaluation figures to the `results/` directory.
-
-Set `DEBUG = True` in `src/main.py` to display additional dataset and hyperparameter information.
+The script prints model-comparison and evaluation outputs and saves plots to `results/`. Set `DEBUG = True` in `src/main.py` for additional intermediate diagnostics.
 
 ## Limitations and Future Work
 
-- **Recorded position vs. optimal position:** A classification mismatch does not prove that a player should play another position.
-- **Player identity:** Grouping by player name reduces leakage but may incorrectly combine different players with identical names.
-- **Data scope:** Results may not generalize to other seasons, leagues, or tactical systems.
-- **Feature representation:** Season-level statistics may not capture formations, tactical instructions, or contextual playing roles.
-- **Review costs:** The human-review simulation assumes reviewed errors can be resolved and uses illustrative costs rather than observed outcomes.
+- A recorded playing position is not an independently verified label for a player's _best_ position.
+- Grouping by player names is an imperfect substitute for unique player identifiers.
+- Results may not transfer to other seasons, leagues, or tactical systems.
+- Aggregate season statistics omit tactical assignments and some match context.
+- Probability calibration and real coach-reviewed outcomes would be needed before operational use.
 
-Future work could incorporate per-90 statistics, additional seasons, richer tactical features, probability calibration, and independent expert labels for player-review decisions.
+Potential extensions include per-90 features, multiple seasons, richer tactical context, probability calibration, and independent expert labels for human-review value.
 
 ## Technologies
 
-Python, NumPy, pandas, scikit-learn, and Matplotlib.
+Python, pandas, NumPy, scikit-learn, and Matplotlib.
+
+## Data Attribution
+
+Sidorowicz, H. (n.d.). _Football Players Stats (2024–2025)_ [Dataset]. Kaggle. https://www.kaggle.com/datasets/hubertsidorowicz/football-players-stats-2024-2025
+
+Statistical data are described as FBref-derived. See [FBref](https://fbref.com/) for the underlying football-statistics source.
