@@ -834,6 +834,121 @@ print("FP: Correct predictions flagged:", false_positives)
 print("FN: Incorrect predictions missed:", false_negatives)
 print("TN: Correct predictions accepted:", true_negatives)
 
+# Binary review-cost sensitivity analysis
+cost_ratios = [5, 10, 20]
+binary_sensitivity_results = []
+
+plt.figure(figsize=(8, 5))
+
+for missed_cost in cost_ratios:
+    scenario_costs = []
+
+    for threshold in thresholds:
+        flagged = confidence < threshold
+
+        total_cost = (
+            np.sum(flagged) * review_cost
+            + np.sum(~flagged & actual_errors) * missed_cost
+        )
+
+        scenario_costs.append(total_cost)
+
+    scenario_costs = np.array(scenario_costs)
+    best_idx = np.argmin(scenario_costs)
+    selected_threshold = thresholds[best_idx]
+
+    selected_flags = confidence < selected_threshold
+
+    never_review_cost = np.sum(actual_errors) * missed_cost
+    always_review_cost = len(y_train) * review_cost
+
+    binary_sensitivity_results.append({
+        "Cost Ratio": f"{missed_cost}:1",
+        "Best Threshold": selected_threshold,
+        "Flagged": np.sum(selected_flags),
+        "Minimum Cost": scenario_costs[best_idx],
+        "Never Review": never_review_cost,
+        "Always Review": always_review_cost
+    })
+
+    plt.plot(
+        thresholds,
+        scenario_costs,
+        label=f"Missed Error Cost = {missed_cost}"
+    )
+
+    plt.scatter(
+        selected_threshold,
+        scenario_costs[best_idx],
+        s=35
+    )
+
+binary_sensitivity_df = pd.DataFrame(
+    binary_sensitivity_results
+)
+
+print("\n--- Binary Cost-Ratio Sensitivity ---")
+print(binary_sensitivity_df.to_string(index=False))
+
+plt.xlabel("Confidence Threshold")
+plt.ylabel("Total Simulated Cost")
+plt.title("Review Threshold Sensitivity to Error Costs")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.savefig(
+    RESULTS_DIR / "binary_cost_sensitivity.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
+# Binary ROC: detect incorrect position classifications
+error_scores = 1 - confidence
+
+binary_fpr, binary_tpr, binary_thresholds = roc_curve(
+    actual_errors.astype(int),
+    error_scores
+)
+
+binary_auc = auc(binary_fpr, binary_tpr)
+
+print("\n--- Binary Error-Detection ROC ---")
+print(f"OOF ROC-AUC: {binary_auc:.4f}")
+
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    binary_fpr,
+    binary_tpr,
+    label=f"Error Detection (AUC = {binary_auc:.3f})"
+)
+
+plt.plot(
+    [0, 1],
+    [0, 1],
+    linestyle="--",
+    color="gray",
+    label="Random Classifier"
+)
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve: Detecting Classification Errors")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.savefig(
+    RESULTS_DIR / "binary_error_detection_roc.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.close()
+
 # Final evaluation on the held-out test set
 final_model = log_reg_search.best_estimator_
 
